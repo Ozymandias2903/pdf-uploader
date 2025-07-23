@@ -1,22 +1,51 @@
 import pdfplumber
-from bson.objectid import ObjectId
-from ..db import documents_collection
+import tempfile
+import os
+from fastapi import Request, UploadFile, HTTPException
+from app.db.repositories import DocumentRepository
+from app.core.logger import logger
+from app.db.collections import get_documents_collection
 
-def extract_text_from_pdf(file_path: str) -> str:
-    text = ""
-    with pdfplumber.open(file_path) as pdf:
-        for page in pdf.pages:
-            page_text = page.extract_text()
-            if page_text:
-                text += page_text + "\n"
-    return text
+class PDFProcessingError(Exception):
+    pass
 
-def save_pdf_text_to_db(text: str) -> str:
-    result = documents_collection.insert_one({"text": text})
-    return str(result.inserted_id)
+async def extract_text_from_pdf(file_path: str) -> str:
+    try:
+        full_text = ""
+        with pdfplumber.open(file_path) as pdf:
+            for page in pdf.pages:
+                text = page.extract_text()
+                if text:
+                    full_text += text + "\n"
+        return full_text
+    except Exception as e:
+        logger.error(f"PDF text extraction failed: {e}")
+        raise PDFProcessingError("Failed to extract text from PDF")
 
-def get_document_text_by_id(doc_id: str) -> str:
-    doc = documents_collection.find_one({"_id": ObjectId(doc_id)})
-    if doc:
-        return doc.get("text", "")
-    return None
+async def handle_pdf_upload(request: Request, file: UploadFile) -> str:
+    try:
+        # Save file temporarily
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+            contents = await file.read()
+            tmp.write(contents)
+            tmp_path = tmp.name
+
+        # Extract text
+        text = await extract_text_from_pdf(tmp_path)
+        os.unlink(tmp_path)
+
+        if not text.strip():
+            raise PDFProcessingError("PDF contains no usable text")
+
+        # Get collection using request
+        collection = get_documents_collection(request)
+        repo = DocumentRepository(collection)
+
+        # Insert to DB
+        document_id = await repo.insert_document({"text": text})
+        return document_id
+    except PDFProcessingError:
+        raise
+    except Exception as e:
+        logger.error(f"handle_pdf_upload error: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")

@@ -1,7 +1,13 @@
-import Home from "./pages/Home";
+import { Routes, Route, Navigate } from "react-router-dom";
+import UploadPage from "./pages/UploadPage";
+import ChatPage from "./pages/ChatPage";
 
 export default function App() {
   return (
-    <Home />
+    <Routes>
+      <Route path="/" element={<UploadPage />} />
+      <Route path="/chat/:documentId" element={<ChatPage />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
   );
 }
